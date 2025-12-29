@@ -17,5 +17,9 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - name: Install dependencies
         run: uv sync
-      - name: Compile
-        run: uv run python -m compileall src/arglib_server
+      - name: Lint
+        run: uv run ruff check src/arglib_server
+      - name: Type check
+        run: uv run mypy src/arglib_server
+      - name: Tests
+        run: uv run pytest

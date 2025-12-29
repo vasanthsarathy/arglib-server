@@ -20,3 +20,10 @@ arglib-server = "arglib_server.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["arglib_server*"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.10",
+]
