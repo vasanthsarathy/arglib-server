@@ -187,6 +187,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphResponse"
+  /datasets/load:
+    post:
+      summary: Load dataset from JSONL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatasetLoadRequest"
+      responses:
+        "200":
+          description: Loaded dataset graphs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetLoadResponse"
 components:
   schemas:
     GraphPayload:
@@ -232,3 +248,21 @@ components:
         payload:
           type: object
       required: [payload]
+    DatasetLoadRequest:
+      type: object
+      properties:
+        path:
+          type: string
+        limit:
+          type: integer
+          nullable: true
+      required: [path]
+    DatasetLoadResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        items:
+          type: array
+          items:
+            type: object

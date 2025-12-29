@@ -53,6 +53,16 @@ class SupportingDocumentPayload(BaseModel):
     payload: dict[str, Any]
 
 
+class DatasetLoadRequest(BaseModel):
+    path: str
+    limit: int | None = None
+
+
+class DatasetLoadResponse(BaseModel):
+    count: int
+    items: list[dict[str, Any]]
+
+
 class GraphStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -205,6 +215,89 @@ def mining_parse(request: MiningRequest) -> GraphResponse:
     graph = miner.parse(request.text, doc_id=request.doc_id)
     graph_id = store.create(graph.to_dict(), validate=False)
     return GraphResponse(id=graph_id, payload=graph.to_dict())
+
+
+@app.post("/datasets/load", response_model=DatasetLoadResponse)
+def load_dataset(request: DatasetLoadRequest) -> DatasetLoadResponse:
+    items: list[dict[str, Any]] = []
+    try:
+        with open(request.path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if request.limit is not None and len(items) >= request.limit:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                graph_payload = payload.get("graph")
+                if not isinstance(graph_payload, dict):
+                    continue
+                arglib_payload = _convert_dataset_graph(graph_payload, payload)
+                graph_id = store.create(arglib_payload, validate=False)
+                items.append(
+                    {
+                        "id": graph_id,
+                        "topic": payload.get("topic"),
+                        "issue": payload.get("issue"),
+                        "stance": payload.get("stance"),
+                        "stats": payload.get("graph_stats"),
+                    }
+                )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return DatasetLoadResponse(count=len(items), items=items)
+
+
+def _convert_dataset_graph(graph_payload: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    nodes = graph_payload.get("nodes", [])
+    edges = graph_payload.get("edges", [])
+    units: dict[str, dict[str, Any]] = {}
+    node_id_map: dict[int, str] = {}
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id is None:
+            continue
+        unit_id = f"n{node_id}"
+        node_id_map[node_id] = unit_id
+        units[unit_id] = {
+            "id": unit_id,
+            "text": node.get("text", ""),
+            "type": node.get("type", "other"),
+            "spans": [],
+            "evidence": [],
+            "evidence_ids": [],
+            "metadata": {
+                "paraphrased": node.get("paraphrased"),
+                "implicit": node.get("implicit"),
+            },
+        }
+    relations: list[dict[str, Any]] = []
+    for edge in edges:
+        src = node_id_map.get(edge.get("from"))
+        dst = node_id_map.get(edge.get("to"))
+        if not src or not dst:
+            continue
+        relation = edge.get("relation", "support")
+        kind = "support" if relation in {"support", "supports"} else "attack"
+        relations.append({"src": src, "dst": dst, "kind": kind})
+
+    return {
+        "units": units,
+        "relations": relations,
+        "metadata": {
+            "topic": source.get("topic"),
+            "issue": source.get("issue"),
+            "stance": source.get("stance"),
+            "pattern": source.get("pattern"),
+            "graph_stats": source.get("graph_stats"),
+        },
+        "evidence_cards": {},
+        "supporting_documents": {},
+        "argument_bundles": {},
+    }
 
 
 def main() -> None:
