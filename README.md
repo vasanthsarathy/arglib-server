@@ -12,7 +12,8 @@ Thin FastAPI service that exposes ArgLib graph CRUD, mining, diagnostics, and ex
 - `uv run arglib-server`
 
 ## Notes
-This is a scaffold with in-memory storage only. Use for local development.
+This service uses a local SQLite file for persistence. Set `ARGLIB_SERVER_DB`
+to customize the path (defaults to `arglib.db`).
 
 ## API surface (initial)
 - `POST /graphs` create

@@ -113,6 +113,64 @@ paths:
       responses:
         "200":
           description: Export payload
+  /graphs/{graph_id}/supporting-documents:
+    get:
+      summary: List supporting documents
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Supporting documents
+    post:
+      summary: Add supporting document
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportingDocumentPayload"
+      responses:
+        "200":
+          description: OK
+  /graphs/{graph_id}/evidence-cards:
+    get:
+      summary: List evidence cards
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Evidence cards
+    post:
+      summary: Add evidence card
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceCardPayload"
+      responses:
+        "200":
+          description: OK
   /mining/parse:
     post:
       summary: Parse text into a graph
@@ -162,3 +220,15 @@ components:
           type: string
           enum: [json, dot]
       required: [format]
+    EvidenceCardPayload:
+      type: object
+      properties:
+        payload:
+          type: object
+      required: [payload]
+    SupportingDocumentPayload:
+      type: object
+      properties:
+        payload:
+          type: object
+      required: [payload]
