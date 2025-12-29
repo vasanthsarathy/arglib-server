@@ -1,0 +1,37 @@
+Metadata-Version: 2.4
+Name: arglib-server
+Version: 0.1.0
+Summary: FastAPI service for ArgLib
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: arglib>=0.1.1
+Requires-Dist: fastapi>=0.111
+Requires-Dist: uvicorn>=0.30
+
+# ArgLib Server
+
+Thin FastAPI service that exposes ArgLib graph CRUD, mining, diagnostics, and export endpoints.
+
+## Goals
+- Serve as the backend for arglib-ui.
+- Keep all core logic inside the arglib library.
+- Provide a stable API contract (OpenAPI).
+
+## Quick start (planned)
+- `uv sync`
+- `uv run arglib-server`
+
+## Notes
+This is a scaffold with in-memory storage only. Use for local development.
+
+## API surface (initial)
+- `POST /graphs` create
+- `GET /graphs/{graph_id}` fetch
+- `PUT /graphs/{graph_id}` update
+- `DELETE /graphs/{graph_id}` delete
+- `POST /graphs/{graph_id}/diagnostics`
+- `POST /graphs/{graph_id}/credibility`
+- `POST /graphs/{graph_id}/export`
+- `POST /mining/parse`
+
+OpenAPI spec lives at `openapi.yaml`.

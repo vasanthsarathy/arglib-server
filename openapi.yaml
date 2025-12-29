@@ -1,0 +1,164 @@
+openapi: 3.0.3
+info:
+  title: ArgLib Server
+  version: 0.1.0
+servers:
+  - url: http://127.0.0.1:8000
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /graphs:
+    post:
+      summary: Create a graph
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphPayload"
+      responses:
+        "200":
+          description: Graph created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+  /graphs/{graph_id}:
+    get:
+      summary: Get a graph
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+    put:
+      summary: Update a graph
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphPayload"
+      responses:
+        "200":
+          description: Updated
+    delete:
+      summary: Delete a graph
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+  /graphs/{graph_id}/diagnostics:
+    post:
+      summary: Compute diagnostics
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Diagnostics payload
+  /graphs/{graph_id}/credibility:
+    post:
+      summary: Compute credibility propagation
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Credibility payload
+  /graphs/{graph_id}/export:
+    post:
+      summary: Export a graph
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+      responses:
+        "200":
+          description: Export payload
+  /mining/parse:
+    post:
+      summary: Parse text into a graph
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiningRequest"
+      responses:
+        "200":
+          description: Graph created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+components:
+  schemas:
+    GraphPayload:
+      type: object
+      properties:
+        payload:
+          type: object
+        validate:
+          type: boolean
+      required: [payload]
+    GraphResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        payload:
+          type: object
+      required: [id, payload]
+    MiningRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        doc_id:
+          type: string
+      required: [text]
+    ExportRequest:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [json, dot]
+      required: [format]

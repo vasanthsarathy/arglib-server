@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arglib-server"
+version = "0.1.0"
+description = "FastAPI service for ArgLib"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "arglib>=0.1.1",
+  "fastapi>=0.111",
+  "uvicorn>=0.30",
+]
+
+[project.scripts]
+arglib-server = "arglib_server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["arglib_server*"]

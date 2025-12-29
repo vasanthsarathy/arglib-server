@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/arglib_server/app.py
+src/arglib_server.egg-info/PKG-INFO
+src/arglib_server.egg-info/SOURCES.txt
+src/arglib_server.egg-info/dependency_links.txt
+src/arglib_server.egg-info/entry_points.txt
+src/arglib_server.egg-info/requires.txt
+src/arglib_server.egg-info/top_level.txt
