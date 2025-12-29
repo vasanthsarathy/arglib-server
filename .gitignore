@@ -1,0 +1,13 @@
+# .gitignore for arglib-server
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.env
+.venv/
+.dist/
+build/
+
+# editor
+.vscode/
+.idea/

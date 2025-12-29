@@ -1,2 +1,0 @@
-[console_scripts]
-arglib-server = arglib_server.app:main
