@@ -207,6 +207,16 @@ def add_evidence_card(
     return {"status": "ok"}
 
 
+@app.post("/graphs/{graph_id}/units/{unit_id}/evidence-cards/{card_id}")
+def attach_evidence_card(
+    graph_id: str, unit_id: str, card_id: str
+) -> dict[str, str]:
+    graph = store.get(graph_id)
+    graph.attach_evidence_card(unit_id, card_id)
+    store.update(graph_id, graph.to_dict(), validate=False)
+    return {"status": "ok"}
+
+
 @app.post("/mining/parse")
 def mining_parse(request: MiningRequest) -> GraphResponse:
     from arglib.ai import LongDocumentMiner, SimpleArgumentMiner

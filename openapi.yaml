@@ -171,6 +171,28 @@ paths:
       responses:
         "200":
           description: OK
+  /graphs/{graph_id}/units/{unit_id}/evidence-cards/{card_id}:
+    post:
+      summary: Attach evidence card to unit
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: unit_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: card_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
   /mining/parse:
     post:
       summary: Parse text into a graph
