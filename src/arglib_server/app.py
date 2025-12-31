@@ -28,7 +28,9 @@ app.add_middleware(
 
 class GraphPayload(BaseModel):
     payload: dict[str, Any] = Field(..., description="ArgumentGraph JSON payload")
-    validate: bool = True
+    validate_payload: bool = Field(True, alias="validate")
+
+    model_config = {"populate_by_name": True}
 
 
 class GraphResponse(BaseModel):
@@ -169,7 +171,7 @@ def health() -> dict[str, str]:
 
 @app.post("/graphs", response_model=GraphResponse)
 def create_graph(request: GraphPayload) -> GraphResponse:
-    graph_id = store.create(request.payload, validate=request.validate)
+    graph_id = store.create(request.payload, validate=request.validate_payload)
     return GraphResponse(id=graph_id, payload=request.payload)
 
 
@@ -181,7 +183,7 @@ def get_graph(graph_id: str) -> GraphResponse:
 
 @app.put("/graphs/{graph_id}")
 def update_graph(graph_id: str, request: GraphPayload) -> dict[str, str]:
-    store.update(graph_id, request.payload, validate=request.validate)
+    store.update(graph_id, request.payload, validate=request.validate_payload)
     return {"status": "ok"}
 
 
