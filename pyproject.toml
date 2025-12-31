@@ -33,3 +33,6 @@ dev = [
 [[tool.mypy.overrides]]
 module = ["arglib.*"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--allow-no-tests"
