@@ -95,6 +95,77 @@ paths:
       responses:
         "200":
           description: Credibility payload
+  /graphs/{graph_id}/reasoning:
+    post:
+      summary: Compute argumentation semantics
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasoningRequest"
+      responses:
+        "200":
+          description: Reasoning payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReasoningResponse"
+  /graphs/{graph_id}/reasoner:
+    post:
+      summary: Run reasoning tasks
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonerRequest"
+      responses:
+        "200":
+          description: Reasoner results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReasonerResponse"
+  /graphs/{graph_id}/units/{unit_id}/llm-confidence:
+    post:
+      summary: Score claim confidence with LLM
+      parameters:
+        - name: graph_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: unit_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMClaimConfidenceRequest"
+      responses:
+        "200":
+          description: LLM confidence score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMClaimConfidenceResponse"
   /graphs/{graph_id}/export:
     post:
       summary: Export a graph
@@ -258,6 +329,82 @@ components:
           type: string
           enum: [json, dot]
       required: [format]
+    ReasoningRequest:
+      type: object
+      properties:
+        semantics:
+          type: string
+          enum: [grounded, preferred, stable, complete, labelings]
+      required: [semantics]
+    ReasoningResponse:
+      type: object
+      properties:
+        semantics:
+          type: string
+        arguments:
+          type: array
+          items:
+            type: string
+        extensions:
+          type: array
+          nullable: true
+          items:
+            type: array
+            items:
+              type: string
+        labeling:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+      required: [semantics, arguments]
+    ReasonerRequest:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            type: string
+        explain:
+          type: boolean
+      required: [tasks]
+    ReasonerResponse:
+      type: object
+      properties:
+        results:
+          type: object
+      required: [results]
+    LLMClaimConfidenceRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        model:
+          type: string
+          nullable: true
+        temperature:
+          type: number
+          nullable: true
+      required: [provider]
+    LLMClaimConfidenceResponse:
+      type: object
+      properties:
+        score:
+          type: number
+        weighted_score:
+          type: number
+          nullable: true
+        rationale:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        score_source:
+          type: string
+          nullable: true
+      required: [score, rationale, provider, model]
     EvidenceCardPayload:
       type: object
       properties:

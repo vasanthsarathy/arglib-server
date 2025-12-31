@@ -45,6 +45,47 @@ class ExportRequest(BaseModel):
     format: Literal["json", "dot"] = "json"
 
 
+class ReasoningRequest(BaseModel):
+    semantics: Literal[
+        "grounded",
+        "preferred",
+        "stable",
+        "complete",
+        "labelings",
+    ] = "grounded"
+
+
+class ReasoningResponse(BaseModel):
+    semantics: str
+    arguments: list[str]
+    extensions: list[list[str]] | None = None
+    labeling: dict[str, str] | None = None
+
+
+class ReasonerRequest(BaseModel):
+    tasks: list[str]
+    explain: bool = False
+
+
+class ReasonerResponse(BaseModel):
+    results: dict[str, Any]
+
+
+class LLMClaimConfidenceRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+
+
+class LLMClaimConfidenceResponse(BaseModel):
+    score: float
+    weighted_score: float | None = None
+    rationale: str
+    provider: str
+    model: str
+    score_source: str | None = None
+
+
 class EvidenceCardPayload(BaseModel):
     payload: dict[str, Any]
 
@@ -159,8 +200,102 @@ def diagnostics(graph_id: str) -> dict[str, Any]:
 @app.post("/graphs/{graph_id}/credibility")
 def credibility(graph_id: str) -> dict[str, Any]:
     graph = store.get(graph_id)
-    result = compute_credibility(graph)
+    initial_scores = {
+        unit_id: unit.metadata.get("claim_credibility")
+        for unit_id, unit in graph.units.items()
+        if unit.metadata and "claim_credibility" in unit.metadata
+    }
+    result = compute_credibility(
+        graph, initial_scores=initial_scores or None
+    )
     return asdict(result)
+
+
+@app.post("/graphs/{graph_id}/reasoning", response_model=ReasoningResponse)
+def reasoning(graph_id: str, request: ReasoningRequest) -> ReasoningResponse:
+    graph = store.get(graph_id)
+    af = graph.to_dung()
+    arguments = sorted(af.arguments)
+
+    if request.semantics == "grounded":
+        extensions = [sorted(af.grounded_extension())]
+        return ReasoningResponse(
+            semantics="grounded",
+            arguments=arguments,
+            extensions=extensions,
+        )
+    if request.semantics == "preferred":
+        extensions = [sorted(ext) for ext in af.preferred_extensions()]
+        return ReasoningResponse(
+            semantics="preferred",
+            arguments=arguments,
+            extensions=extensions,
+        )
+    if request.semantics == "stable":
+        extensions = [sorted(ext) for ext in af.stable_extensions()]
+        return ReasoningResponse(
+            semantics="stable",
+            arguments=arguments,
+            extensions=extensions,
+        )
+    if request.semantics == "complete":
+        extensions = [sorted(ext) for ext in af.complete_extensions()]
+        return ReasoningResponse(
+            semantics="complete",
+            arguments=arguments,
+            extensions=extensions,
+        )
+    labelings = af.labelings("grounded")[0]
+    return ReasoningResponse(
+        semantics="grounded_labeling",
+        arguments=arguments,
+        labeling=labelings,
+    )
+
+
+@app.post("/graphs/{graph_id}/reasoner", response_model=ReasonerResponse)
+def reasoner(graph_id: str, request: ReasonerRequest) -> ReasonerResponse:
+    from arglib.reasoning import Reasoner
+
+    graph = store.get(graph_id)
+    runner = Reasoner(graph)
+    results = runner.run(request.tasks, explain=request.explain)
+    return ReasonerResponse(results=results)
+
+
+@app.post(
+    "/graphs/{graph_id}/units/{unit_id}/llm-confidence",
+    response_model=LLMClaimConfidenceResponse,
+)
+def llm_claim_confidence(
+    graph_id: str, unit_id: str, request: LLMClaimConfidenceRequest
+) -> LLMClaimConfidenceResponse:
+    from arglib.ai import build_claim_credibility_hook, score_claims_with_llm
+    from arglib.ai.llm import AnthropicClient, OllamaClient, OpenAIClient
+
+    graph = store.get(graph_id)
+    if unit_id not in graph.units:
+        raise HTTPException(status_code=404, detail="unit not found")
+
+    provider = request.provider
+    model = request.model or _default_model(provider)
+    client = _llm_client(provider, model, temperature=request.temperature)
+    hook = build_claim_credibility_hook(client)
+    results = score_claims_with_llm(graph, hook, unit_ids=[unit_id])
+    result = results[unit_id]
+    rationale = result.evidence_scores[0].rationale if result.evidence_scores else ""
+    graph.units[unit_id].metadata["claim_credibility_provider"] = provider
+    graph.units[unit_id].metadata["claim_credibility_model"] = model
+    store.update(graph_id, graph.to_dict(), validate=False)
+
+    return LLMClaimConfidenceResponse(
+        score=result.claim_score,
+        weighted_score=result.weighted_score,
+        rationale=rationale or "",
+        provider=provider,
+        model=model,
+        score_source=result.score_source,
+    )
 
 
 @app.post("/graphs/{graph_id}/export")
@@ -308,6 +443,27 @@ def _convert_dataset_graph(graph_payload: dict[str, Any], source: dict[str, Any]
         "supporting_documents": {},
         "argument_bundles": {},
     }
+
+
+def _default_model(provider: str) -> str:
+    if provider == "anthropic":
+        return "claude-3-5-sonnet-20240620"
+    if provider == "ollama":
+        return "llama3.1"
+    return "gpt-4o-mini"
+
+
+def _llm_client(provider: str, model: str, temperature: float | None = None):
+    from arglib.ai.llm import AnthropicClient, OllamaClient, OpenAIClient
+
+    options = None
+    if temperature is not None:
+        options = {"temperature": temperature}
+    if provider == "anthropic":
+        return AnthropicClient(model=model, options=options)
+    if provider == "ollama":
+        return OllamaClient(model=model, options=options)
+    return OpenAIClient(model=model, options=options)
 
 
 def main() -> None:
