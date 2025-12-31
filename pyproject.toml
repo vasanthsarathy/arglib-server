@@ -30,5 +30,5 @@ dev = [
 
 [tool.mypy]
 
-[tool.mypy-arglib.*]
+[tool.mypy-"arglib.*"]
 ignore_missing_imports = true
