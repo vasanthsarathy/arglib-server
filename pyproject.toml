@@ -30,6 +30,6 @@ dev = [
 
 [tool.mypy]
 
-[tool.mypy.overrides]
+[[tool.mypy.overrides]]
 module = ["arglib.*"]
 ignore_missing_imports = true
