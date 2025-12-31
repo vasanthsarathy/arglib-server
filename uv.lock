@@ -35,21 +35,11 @@ wheels = [
 
 [[package]]
 name = "arglib"
-version = "0.1.1"
-source = { editable = "../arglib" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "build" },
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
-    { name = "mypy" },
-    { name = "ollama-python", specifier = ">=0.1.2" },
-    { name = "pypdf", specifier = ">=6.5.0" },
-    { name = "pytest" },
-    { name = "ruff" },
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/db/da172edb833e8767e57f191a0adaa708c36ba850d7f4809e885dcdbf5cd9/arglib-0.1.2.tar.gz", hash = "sha256:080478926c46ef0862da415487495a924f52f52d30f5639975072f0155841421", size = 34235, upload-time = "2025-12-31T20:01:45.861Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/4e/c085446339b34a8f6e93c8fa5ac5a5832a5b11cdfebd5aaee899b6a23b6e/arglib-0.1.2-py3-none-any.whl", hash = "sha256:1ea27780086f32974ea80d40ef26705b23caee3585b6aae7a89d61bafdce64cd", size = 38189, upload-time = "2025-12-31T20:01:44.557Z" },
 ]
 
 [[package]]
@@ -71,7 +61,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arglib", editable = "../arglib" },
+    { name = "arglib", specifier = ">=0.1.2" },
     { name = "fastapi", specifier = ">=0.111" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
