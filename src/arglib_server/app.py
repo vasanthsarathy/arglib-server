@@ -271,7 +271,6 @@ def llm_claim_confidence(
     graph_id: str, unit_id: str, request: LLMClaimConfidenceRequest
 ) -> LLMClaimConfidenceResponse:
     from arglib.ai import build_claim_credibility_hook, score_claims_with_llm
-    from arglib.ai.llm import AnthropicClient, OllamaClient, OpenAIClient
 
     graph = store.get(graph_id)
     if unit_id not in graph.units:
