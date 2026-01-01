@@ -88,6 +88,24 @@ class LLMClaimConfidenceResponse(BaseModel):
     score_source: str | None = None
 
 
+class EdgeAssumptionsRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+    k: int = 3
+
+
+class EdgeAssumptionItem(BaseModel):
+    assumption: str
+    rationale: str | None = None
+    importance: float | None = None
+
+
+class EdgeAssumptionsResponse(BaseModel):
+    edge_id: str
+    assumptions: list[EdgeAssumptionItem]
+
+
 class EvidenceCardPayload(BaseModel):
     payload: dict[str, Any]
 
@@ -296,6 +314,53 @@ def llm_claim_confidence(
         provider=provider,
         model=model,
         score_source=result.score_source,
+    )
+
+
+@app.post(
+    "/graphs/{graph_id}/edges/{edge_id}/assumptions",
+    response_model=EdgeAssumptionsResponse,
+)
+def edge_assumptions(
+    graph_id: str, edge_id: str, request: EdgeAssumptionsRequest
+) -> EdgeAssumptionsResponse:
+    from arglib.ai import build_assumption_hook, generate_edge_assumptions
+
+    graph = store.get(graph_id)
+    if not edge_id.startswith("e") or not edge_id[1:].isdigit():
+        raise HTTPException(status_code=404, detail="edge not found")
+    index = int(edge_id[1:])
+    if index < 0 or index >= len(graph.relations):
+        raise HTTPException(status_code=404, detail="edge not found")
+
+    relation = graph.relations[index]
+    source = graph.units.get(relation.src)
+    target = graph.units.get(relation.dst)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="edge not found")
+
+    provider = request.provider
+    model = request.model or _default_model(provider)
+    client = _llm_client(provider, model, temperature=request.temperature)
+    hook = build_assumption_hook(client)
+    assumptions = generate_edge_assumptions(
+        source=source.text,
+        target=target.text,
+        relation=relation.kind,
+        k=max(1, request.k),
+        hook=hook,
+    )
+
+    return EdgeAssumptionsResponse(
+        edge_id=edge_id,
+        assumptions=[
+            EdgeAssumptionItem(
+                assumption=item.assumption,
+                rationale=item.rationale,
+                importance=item.importance,
+            )
+            for item in assumptions
+        ],
     )
 
 
