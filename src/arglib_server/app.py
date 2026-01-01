@@ -88,6 +88,34 @@ class LLMClaimConfidenceResponse(BaseModel):
     score_source: str | None = None
 
 
+class LLMClaimTypeRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+
+
+class LLMClaimTypeResponse(BaseModel):
+    claim_type: str
+    confidence: float | None = None
+    rationale: str | None = None
+    provider: str
+    model: str
+
+
+class LLMEdgeValidationRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+
+
+class LLMEdgeValidationResponse(BaseModel):
+    evaluation: str
+    score: float
+    rationale: str | None = None
+    provider: str
+    model: str
+
+
 class EdgeAssumptionsRequest(BaseModel):
     provider: Literal["openai", "anthropic", "ollama"] = "openai"
     model: str | None = None
@@ -314,6 +342,93 @@ def llm_claim_confidence(
         provider=provider,
         model=model,
         score_source=result.score_source,
+    )
+
+
+@app.post(
+    "/graphs/{graph_id}/units/{unit_id}/claim-type",
+    response_model=LLMClaimTypeResponse,
+)
+def llm_claim_type(
+    graph_id: str, unit_id: str, request: LLMClaimTypeRequest
+) -> LLMClaimTypeResponse:
+    from arglib.ai import build_claim_type_hook, classify_claim_type
+
+    graph = store.get(graph_id)
+    if unit_id not in graph.units:
+        raise HTTPException(status_code=404, detail="unit not found")
+
+    provider = request.provider
+    model = request.model or _default_model(provider)
+    client = _llm_client(provider, model, temperature=request.temperature)
+    hook = build_claim_type_hook(client)
+    result = classify_claim_type(claim=graph.units[unit_id].text, hook=hook)
+
+    graph.units[unit_id].type = result.claim_type
+    graph.units[unit_id].metadata["claim_type_provider"] = provider
+    graph.units[unit_id].metadata["claim_type_model"] = model
+    graph.units[unit_id].metadata["claim_type_confidence"] = result.confidence
+    graph.units[unit_id].metadata["claim_type_rationale"] = result.rationale
+    store.update(graph_id, graph.to_dict(), validate=False)
+
+    return LLMClaimTypeResponse(
+        claim_type=result.claim_type,
+        confidence=result.confidence,
+        rationale=result.rationale,
+        provider=provider,
+        model=model,
+    )
+
+
+@app.post(
+    "/graphs/{graph_id}/edges/{edge_id}/validate",
+    response_model=LLMEdgeValidationResponse,
+)
+def llm_edge_validation(
+    graph_id: str, edge_id: str, request: LLMEdgeValidationRequest
+) -> LLMEdgeValidationResponse:
+    from arglib.ai import build_edge_validation_hook, validate_edge_with_llm
+
+    graph = store.get(graph_id)
+    if not edge_id.startswith("e") or not edge_id[1:].isdigit():
+        raise HTTPException(status_code=404, detail="edge not found")
+    index = int(edge_id[1:])
+    if index < 0 or index >= len(graph.relations):
+        raise HTTPException(status_code=404, detail="edge not found")
+
+    relation = graph.relations[index]
+    source = graph.units.get(relation.src)
+    target = graph.units.get(relation.dst)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="edge not found")
+
+    provider = request.provider
+    model = request.model or _default_model(provider)
+    client = _llm_client(provider, model, temperature=request.temperature)
+    hook = build_edge_validation_hook(client)
+    result = validate_edge_with_llm(
+        source=source.text,
+        target=target.text,
+        hook=hook,
+    )
+
+    relation.metadata["llm_validation"] = {
+        "evaluation": result.evaluation,
+        "score": result.score,
+        "rationale": result.rationale,
+        "provider": provider,
+        "model": model,
+    }
+    if result.evaluation in {"support", "attack"}:
+        relation.kind = result.evaluation
+    store.update(graph_id, graph.to_dict(), validate=False)
+
+    return LLMEdgeValidationResponse(
+        evaluation=result.evaluation,
+        score=result.score,
+        rationale=result.rationale,
+        provider=provider,
+        model=model,
     )
 
 
