@@ -419,6 +419,7 @@ def llm_edge_validation(
         "provider": provider,
         "model": model,
     }
+    relation.weight = result.score
     if result.evaluation in {"support", "attack"}:
         relation.kind = result.evaluation
     store.update(graph_id, graph.to_dict(), validate=False)
