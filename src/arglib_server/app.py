@@ -41,6 +41,11 @@ class GraphResponse(BaseModel):
 class MiningRequest(BaseModel):
     text: str
     doc_id: str | None = None
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+    use_llm: bool = True
+    long_document: bool = True
 
 
 class ExportRequest(BaseModel):
@@ -536,10 +541,30 @@ def attach_evidence_card(
 
 @app.post("/mining/parse")
 def mining_parse(request: MiningRequest) -> GraphResponse:
-    from arglib.ai import LongDocumentMiner, SimpleArgumentMiner
+    from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
 
-    miner = LongDocumentMiner(miner=SimpleArgumentMiner())
-    graph = miner.parse(request.text, doc_id=request.doc_id)
+    miner = SimpleArgumentMiner()
+    if request.use_llm:
+        provider = request.provider
+        model = request.model or _default_model(provider)
+        client = _llm_client(provider, model, temperature=request.temperature)
+        miner = build_argument_miner(client, fallback=miner)
+
+    if request.long_document:
+        graph = LongDocumentMiner(miner=miner).parse(
+            request.text, doc_id=request.doc_id
+        )
+    else:
+        graph = miner.parse(request.text, doc_id=request.doc_id)
+    graph.metadata.setdefault("mining", {})
+    graph.metadata["mining"].update(
+        {
+            "provider": request.provider,
+            "model": request.model or _default_model(request.provider),
+            "use_llm": request.use_llm,
+            "long_document": request.long_document,
+        }
+    )
     graph_id = store.create(graph.to_dict(), validate=False)
     return GraphResponse(id=graph_id, payload=graph.to_dict())
 
