@@ -49,6 +49,8 @@ class MiningRequest(BaseModel):
     temperature: float | None = None
     use_llm: bool = True
     long_document: bool = True
+    max_chars: int | None = 12000
+    timeout_seconds: float | None = 60.0
 
 
 class MiningUrlRequest(BaseModel):
@@ -61,6 +63,8 @@ class MiningUrlRequest(BaseModel):
     long_document: bool = True
     include_links: bool = True
     max_links: int = 20
+    max_chars: int | None = 12000
+    timeout_seconds: float | None = 60.0
 
 
 class ExportRequest(BaseModel):
@@ -564,6 +568,8 @@ def mining_parse(request: MiningRequest) -> GraphResponse:
         use_llm=request.use_llm,
         long_document=request.long_document,
         doc_id=request.doc_id,
+        max_chars=request.max_chars,
+        timeout_seconds=request.timeout_seconds,
     )
     graph_id = store.create(graph.to_dict(), validate=False)
     return GraphResponse(id=graph_id, payload=graph.to_dict())
@@ -573,6 +579,8 @@ def mining_parse(request: MiningRequest) -> GraphResponse:
 def mining_url(request: MiningUrlRequest) -> GraphResponse:
     raw_html = _fetch_url(request.url)
     text, links = _extract_html_text_and_links(raw_html, base_url=request.url)
+    if request.max_chars is not None and request.max_chars > 0:
+        text = text[: request.max_chars]
     if not text.strip():
         raise HTTPException(status_code=400, detail="No readable text extracted.")
 
@@ -584,6 +592,8 @@ def mining_url(request: MiningUrlRequest) -> GraphResponse:
         use_llm=request.use_llm,
         long_document=request.long_document,
         doc_id=request.doc_id or request.url,
+        max_chars=request.max_chars,
+        timeout_seconds=request.timeout_seconds,
     )
     graph.metadata.setdefault("source", {})
     graph.metadata["source"].update(
@@ -699,13 +709,22 @@ def _mine_text(
     use_llm: bool,
     long_document: bool,
     doc_id: str | None,
+    max_chars: int | None,
+    timeout_seconds: float | None,
 ) -> ArgumentGraph:
     from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
 
     miner = SimpleArgumentMiner()
     resolved_model = model or _default_model(provider)
+    if max_chars is not None and max_chars > 0:
+        text = text[:max_chars]
     if use_llm:
-        client = _llm_client(provider, resolved_model, temperature=temperature)
+        client = _llm_client(
+            provider,
+            resolved_model,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+        )
         miner = build_argument_miner(client, fallback=miner)
 
     if long_document:
@@ -724,17 +743,24 @@ def _mine_text(
     return graph
 
 
-def _llm_client(provider: str, model: str, temperature: float | None = None):
+def _llm_client(
+    provider: str,
+    model: str,
+    *,
+    temperature: float | None = None,
+    timeout_seconds: float | None = None,
+):
     from arglib.ai.llm import AnthropicClient, OllamaClient, OpenAIClient
 
     options = None
     if temperature is not None:
         options = {"temperature": temperature}
+    timeout = timeout_seconds if timeout_seconds is not None else 30.0
     if provider == "anthropic":
-        return AnthropicClient(model=model, options=options)
+        return AnthropicClient(model=model, options=options, timeout=timeout)
     if provider == "ollama":
-        return OllamaClient(model=model, options=options)
-    return OpenAIClient(model=model, options=options)
+        return OllamaClient(model=model, options=options, timeout=timeout)
+    return OpenAIClient(model=model, options=options, timeout=timeout)
 
 
 class _HTMLTextExtractor(HTMLParser):
