@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import urllib.parse
+from html.parser import HTMLParser
+from urllib.request import Request, urlopen
 from dataclasses import asdict
 from typing import Any, Literal
 from uuid import uuid4
@@ -46,6 +49,18 @@ class MiningRequest(BaseModel):
     temperature: float | None = None
     use_llm: bool = True
     long_document: bool = True
+
+
+class MiningUrlRequest(BaseModel):
+    url: str
+    doc_id: str | None = None
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    model: str | None = None
+    temperature: float | None = None
+    use_llm: bool = True
+    long_document: bool = True
+    include_links: bool = True
+    max_links: int = 20
 
 
 class ExportRequest(BaseModel):
@@ -541,29 +556,44 @@ def attach_evidence_card(
 
 @app.post("/mining/parse")
 def mining_parse(request: MiningRequest) -> GraphResponse:
-    from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
+    graph = _mine_text(
+        request.text,
+        provider=request.provider,
+        model=request.model,
+        temperature=request.temperature,
+        use_llm=request.use_llm,
+        long_document=request.long_document,
+        doc_id=request.doc_id,
+    )
+    graph_id = store.create(graph.to_dict(), validate=False)
+    return GraphResponse(id=graph_id, payload=graph.to_dict())
 
-    miner = SimpleArgumentMiner()
-    if request.use_llm:
-        provider = request.provider
-        model = request.model or _default_model(provider)
-        client = _llm_client(provider, model, temperature=request.temperature)
-        miner = build_argument_miner(client, fallback=miner)
 
-    if request.long_document:
-        graph = LongDocumentMiner(miner=miner).parse(
-            request.text, doc_id=request.doc_id
-        )
-    else:
-        graph = miner.parse(request.text, doc_id=request.doc_id)
-    graph.metadata.setdefault("mining", {})
-    graph.metadata["mining"].update(
-        {
-            "provider": request.provider,
-            "model": request.model or _default_model(request.provider),
-            "use_llm": request.use_llm,
-            "long_document": request.long_document,
-        }
+@app.post("/mining/url")
+def mining_url(request: MiningUrlRequest) -> GraphResponse:
+    raw_html = _fetch_url(request.url)
+    text, links = _extract_html_text_and_links(raw_html, base_url=request.url)
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No readable text extracted.")
+
+    graph = _mine_text(
+        text,
+        provider=request.provider,
+        model=request.model,
+        temperature=request.temperature,
+        use_llm=request.use_llm,
+        long_document=request.long_document,
+        doc_id=request.doc_id or request.url,
+    )
+    graph.metadata.setdefault("source", {})
+    graph.metadata["source"].update(
+        {"url": request.url, "extracted_chars": len(text)}
+    )
+    _attach_supporting_documents(
+        graph,
+        request.url,
+        links if request.include_links else [],
+        max_links=max(0, request.max_links),
     )
     graph_id = store.create(graph.to_dict(), validate=False)
     return GraphResponse(id=graph_id, payload=graph.to_dict())
@@ -660,6 +690,40 @@ def _default_model(provider: str) -> str:
     return "gpt-5-mini"
 
 
+def _mine_text(
+    text: str,
+    *,
+    provider: str,
+    model: str | None,
+    temperature: float | None,
+    use_llm: bool,
+    long_document: bool,
+    doc_id: str | None,
+) -> ArgumentGraph:
+    from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
+
+    miner = SimpleArgumentMiner()
+    resolved_model = model or _default_model(provider)
+    if use_llm:
+        client = _llm_client(provider, resolved_model, temperature=temperature)
+        miner = build_argument_miner(client, fallback=miner)
+
+    if long_document:
+        graph = LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
+    else:
+        graph = miner.parse(text, doc_id=doc_id)
+    graph.metadata.setdefault("mining", {})
+    graph.metadata["mining"].update(
+        {
+            "provider": provider,
+            "model": resolved_model,
+            "use_llm": use_llm,
+            "long_document": long_document,
+        }
+    )
+    return graph
+
+
 def _llm_client(provider: str, model: str, temperature: float | None = None):
     from arglib.ai.llm import AnthropicClient, OllamaClient, OpenAIClient
 
@@ -671,6 +735,118 @@ def _llm_client(provider: str, model: str, temperature: float | None = None):
     if provider == "ollama":
         return OllamaClient(model=model, options=options)
     return OpenAIClient(model=model, options=options)
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip = 0
+        self._texts: list[str] = []
+        self._links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._skip += 1
+            return
+        if tag == "a":
+            for name, value in attrs:
+                if name == "href" and value:
+                    self._links.append(value)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        text = data.strip()
+        if text:
+            self._texts.append(text)
+
+    def error(self, message: str) -> None:
+        return None
+
+    def text(self) -> str:
+        return " ".join(self._texts)
+
+    def links(self) -> list[str]:
+        return list(self._links)
+
+
+def _fetch_url(url: str, *, timeout: float = 20.0) -> str:
+    request = Request(
+        url,
+        headers={"User-Agent": "ArgLib/0.1 (+https://github.com/vasanthsarathy)"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Fetch failed: {exc}") from exc
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body.decode("utf-8", errors="ignore")
+
+
+def _extract_html_text_and_links(
+    html: str, *, base_url: str
+) -> tuple[str, list[str]]:
+    parser = _HTMLTextExtractor()
+    parser.feed(html)
+    text = _normalize_text(parser.text())
+    raw_links = parser.links()
+    links = []
+    for href in raw_links:
+        resolved = urllib.parse.urljoin(base_url, href)
+        if resolved.startswith("http://") or resolved.startswith("https://"):
+            links.append(resolved)
+    return text, links
+
+
+def _normalize_text(text: str) -> str:
+    cleaned = " ".join(text.split())
+    return cleaned.strip()
+
+
+def _attach_supporting_documents(
+    graph: ArgumentGraph,
+    source_url: str,
+    links: list[str],
+    *,
+    max_links: int,
+) -> None:
+    graph.add_supporting_document(
+        SupportingDocument(
+            id=f"source-{uuid4().hex}",
+            name=source_url,
+            type="url",
+            url=source_url,
+            metadata={"source": "article"},
+        ),
+        overwrite=True,
+    )
+    if max_links <= 0:
+        return
+    unique_links = []
+    for link in links:
+        if link == source_url or link in unique_links:
+            continue
+        unique_links.append(link)
+        if len(unique_links) >= max_links:
+            break
+    for link in unique_links:
+        graph.add_supporting_document(
+            SupportingDocument(
+                id=f"link-{uuid4().hex}",
+                name=link,
+                type="url",
+                url=link,
+                metadata={"source": "link"},
+            ),
+            overwrite=True,
+        )
 
 
 def main() -> None:
