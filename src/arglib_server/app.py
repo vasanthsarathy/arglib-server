@@ -50,7 +50,7 @@ class MiningRequest(BaseModel):
     use_llm: bool = True
     long_document: bool = True
     max_chars: int | None = 12000
-    timeout_seconds: float | None = 60.0
+    timeout_seconds: float | None = 120.0
 
 
 class MiningUrlRequest(BaseModel):
@@ -64,7 +64,7 @@ class MiningUrlRequest(BaseModel):
     include_links: bool = True
     max_links: int = 20
     max_chars: int | None = 12000
-    timeout_seconds: float | None = 60.0
+    timeout_seconds: float | None = 120.0
 
 
 class ExportRequest(BaseModel):
@@ -714,7 +714,7 @@ def _mine_text(
 ) -> ArgumentGraph:
     from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
 
-    miner = SimpleArgumentMiner()
+    fallback_miner = SimpleArgumentMiner()
     resolved_model = model or _default_model(provider)
     if max_chars is not None and max_chars > 0:
         text = text[:max_chars]
@@ -725,12 +725,29 @@ def _mine_text(
             temperature=temperature,
             timeout_seconds=timeout_seconds,
         )
-        miner = build_argument_miner(client, fallback=miner)
-
-    if long_document:
-        graph = LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
+        miner = build_argument_miner(client, fallback=fallback_miner)
+        try:
+            if long_document:
+                graph = LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
+            else:
+                graph = miner.parse(text, doc_id=doc_id)
+        except Exception as exc:
+            graph = _fallback_mine(
+                fallback_miner,
+                text,
+                doc_id=doc_id,
+                long_document=long_document,
+            )
+            graph.metadata.setdefault("mining", {})
+            graph.metadata["mining"]["llm_error"] = str(exc)
+            graph.metadata["mining"]["llm_fallback"] = True
     else:
-        graph = miner.parse(text, doc_id=doc_id)
+        graph = _fallback_mine(
+            fallback_miner,
+            text,
+            doc_id=doc_id,
+            long_document=long_document,
+        )
     graph.metadata.setdefault("mining", {})
     graph.metadata["mining"].update(
         {
@@ -741,6 +758,20 @@ def _mine_text(
         }
     )
     return graph
+
+
+def _fallback_mine(
+    miner: SimpleArgumentMiner,
+    text: str,
+    *,
+    doc_id: str | None,
+    long_document: bool,
+) -> ArgumentGraph:
+    from arglib.ai import LongDocumentMiner
+
+    if long_document:
+        return LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
+    return miner.parse(text, doc_id=doc_id)
 
 
 def _llm_client(
