@@ -721,22 +721,13 @@ def _mine_text(
     max_chars: int | None,
     timeout_seconds: float | None,
 ) -> ArgumentGraph:
-    from arglib.ai import (
-        LongDocumentMiner,
-        ParagraphSplitter,
-        SimpleArgumentMiner,
-        build_argument_miner,
-    )
+    from arglib.ai import SimpleArgumentMiner, build_argument_mining_pipeline
 
     fallback_miner = SimpleArgumentMiner()
     resolved_model = model or _default_model(provider)
     if max_chars is not None and max_chars > 0:
         text = text[:max_chars]
     trace: list[str] = []
-    if long_document:
-        splitter = ParagraphSplitter()
-        segments = splitter.split(text)
-        trace.append(f"split segments: {len(segments)}")
     if use_llm:
         client = _llm_client(
             provider,
@@ -744,13 +735,12 @@ def _mine_text(
             temperature=temperature,
             timeout_seconds=timeout_seconds,
         )
-        miner = build_argument_miner(client, fallback=fallback_miner)
-        trace.append(f"llm provider: {provider} model: {resolved_model}")
+        pipeline = build_argument_mining_pipeline(client)
+        pipeline.allow_fallback = True
+        pipeline.fallback = fallback_miner
+        trace.append(f"llm pipeline: {provider}/{resolved_model}")
         try:
-            if long_document:
-                graph = LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
-            else:
-                graph = miner.parse(text, doc_id=doc_id)
+            graph = pipeline.parse(text, doc_id=doc_id, metadata=None)
         except Exception as exc:
             graph = _fallback_mine(
                 fallback_miner,
@@ -772,15 +762,18 @@ def _mine_text(
         )
         trace.append("used fallback miner (llm disabled)")
     graph.metadata.setdefault("mining", {})
+    existing_trace = graph.metadata["mining"].get("trace")
+    if not isinstance(existing_trace, list):
+        graph.metadata["mining"]["trace"] = []
     graph.metadata["mining"].update(
         {
             "provider": provider,
             "model": resolved_model,
             "use_llm": use_llm,
             "long_document": long_document,
-            "trace": trace,
         }
     )
+    graph.metadata["mining"]["trace"].extend(trace)
     return graph
 
 
