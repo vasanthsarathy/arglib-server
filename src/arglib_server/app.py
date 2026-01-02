@@ -632,7 +632,7 @@ def _default_model(provider: str) -> str:
         return "claude-3-5-sonnet-20240620"
     if provider == "ollama":
         return "llama3.1"
-    return "gpt-4o-mini"
+    return "gpt-5-mini"
 
 
 def _llm_client(provider: str, model: str, temperature: float | None = None):
