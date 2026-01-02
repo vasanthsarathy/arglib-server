@@ -577,10 +577,16 @@ def mining_parse(request: MiningRequest) -> GraphResponse:
 
 @app.post("/mining/url")
 def mining_url(request: MiningUrlRequest) -> GraphResponse:
+    trace: list[str] = []
+    trace.append(f"fetch url: {request.url}")
     raw_html = _fetch_url(request.url)
+    trace.append(f"fetched html chars: {len(raw_html)}")
     text, links = _extract_html_text_and_links(raw_html, base_url=request.url)
+    trace.append(f"extracted text chars: {len(text)}")
+    trace.append(f"extracted links: {len(links)}")
     if request.max_chars is not None and request.max_chars > 0:
         text = text[: request.max_chars]
+        trace.append(f"trimmed text chars: {len(text)}")
     if not text.strip():
         raise HTTPException(status_code=400, detail="No readable text extracted.")
 
@@ -599,6 +605,9 @@ def mining_url(request: MiningUrlRequest) -> GraphResponse:
     graph.metadata["source"].update(
         {"url": request.url, "extracted_chars": len(text)}
     )
+    graph.metadata.setdefault("mining", {})
+    graph.metadata["mining"].setdefault("trace", [])
+    graph.metadata["mining"]["trace"].extend(trace)
     _attach_supporting_documents(
         graph,
         request.url,
@@ -712,12 +721,22 @@ def _mine_text(
     max_chars: int | None,
     timeout_seconds: float | None,
 ) -> ArgumentGraph:
-    from arglib.ai import LongDocumentMiner, SimpleArgumentMiner, build_argument_miner
+    from arglib.ai import (
+        LongDocumentMiner,
+        ParagraphSplitter,
+        SimpleArgumentMiner,
+        build_argument_miner,
+    )
 
     fallback_miner = SimpleArgumentMiner()
     resolved_model = model or _default_model(provider)
     if max_chars is not None and max_chars > 0:
         text = text[:max_chars]
+    trace: list[str] = []
+    if long_document:
+        splitter = ParagraphSplitter()
+        segments = splitter.split(text)
+        trace.append(f"split segments: {len(segments)}")
     if use_llm:
         client = _llm_client(
             provider,
@@ -726,6 +745,7 @@ def _mine_text(
             timeout_seconds=timeout_seconds,
         )
         miner = build_argument_miner(client, fallback=fallback_miner)
+        trace.append(f"llm provider: {provider} model: {resolved_model}")
         try:
             if long_document:
                 graph = LongDocumentMiner(miner=miner).parse(text, doc_id=doc_id)
@@ -741,6 +761,8 @@ def _mine_text(
             graph.metadata.setdefault("mining", {})
             graph.metadata["mining"]["llm_error"] = str(exc)
             graph.metadata["mining"]["llm_fallback"] = True
+            trace.append(f"llm error: {exc}")
+            trace.append("used fallback miner")
     else:
         graph = _fallback_mine(
             fallback_miner,
@@ -748,6 +770,7 @@ def _mine_text(
             doc_id=doc_id,
             long_document=long_document,
         )
+        trace.append("used fallback miner (llm disabled)")
     graph.metadata.setdefault("mining", {})
     graph.metadata["mining"].update(
         {
@@ -755,6 +778,7 @@ def _mine_text(
             "model": resolved_model,
             "use_llm": use_llm,
             "long_document": long_document,
+            "trace": trace,
         }
     )
     return graph
