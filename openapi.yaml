@@ -92,31 +92,31 @@ paths:
           required: true
           schema:
             type: string
+        - name: explain
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: Credibility payload
-  /graphs/{graph_id}/reasoning:
+  /graphs/{graph_id}/critique:
     post:
-      summary: Compute argumentation semantics
+      summary: Compute critique and flaw patterns
       parameters:
         - name: graph_id
           in: path
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReasoningRequest"
+        - name: apply_actions
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
-          description: Reasoning payload
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReasoningResponse"
+          description: Critique payload
   /graphs/{graph_id}/reasoner:
     post:
       summary: Run reasoning tasks
@@ -329,35 +329,6 @@ components:
           type: string
           enum: [json, dot]
       required: [format]
-    ReasoningRequest:
-      type: object
-      properties:
-        semantics:
-          type: string
-          enum: [grounded, preferred, stable, complete, labelings]
-      required: [semantics]
-    ReasoningResponse:
-      type: object
-      properties:
-        semantics:
-          type: string
-        arguments:
-          type: array
-          items:
-            type: string
-        extensions:
-          type: array
-          nullable: true
-          items:
-            type: array
-            items:
-              type: string
-        labeling:
-          type: object
-          nullable: true
-          additionalProperties:
-            type: string
-      required: [semantics, arguments]
     ReasonerRequest:
       type: object
       properties:

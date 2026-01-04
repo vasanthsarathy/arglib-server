@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from arglib.core import ArgumentGraph, EvidenceCard, SupportingDocument
 from arglib.io import dumps, validate_graph_payload
-from arglib.reasoning import compute_credibility
+from arglib.reasoning import compute_credibility, explain_credibility
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -69,23 +69,6 @@ class MiningUrlRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     format: Literal["json", "dot"] = "json"
-
-
-class ReasoningRequest(BaseModel):
-    semantics: Literal[
-        "grounded",
-        "preferred",
-        "stable",
-        "complete",
-        "labelings",
-    ] = "grounded"
-
-
-class ReasoningResponse(BaseModel):
-    semantics: str
-    arguments: list[str]
-    extensions: list[list[str]] | None = None
-    labeling: dict[str, str] | None = None
 
 
 class ReasonerRequest(BaseModel):
@@ -176,6 +159,139 @@ class DatasetLoadResponse(BaseModel):
     items: list[dict[str, Any]]
 
 
+def _clamp01(value: Any, *, fallback: float = 0.5) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(0.0, min(1.0, number))
+
+
+def _ui_probability_from_score(value: Any) -> float:
+    if value is None:
+        return 0.5
+    score = float(value)
+    return max(0.0, min(1.0, (score + 1.0) / 2.0))
+
+
+def _ui_score_from_probability(value: float) -> float:
+    return max(-1.0, min(1.0, value * 2.0 - 1.0))
+
+
+def _ui_score_locked(item: dict[str, Any]) -> bool:
+    return bool(
+        item.get("scoreLocked")
+        or item.get("manualScore")
+        or item.get("score_locked")
+        or item.get("locked")
+    )
+
+
+def _ui_locked_scores(
+    items: list[Any],
+    *,
+    id_key: str = "id",
+    score_key: str = "credibility",
+) -> dict[str, float]:
+    locked: dict[str, float] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if not _ui_score_locked(item):
+            continue
+        item_id = item.get(id_key)
+        if not item_id or score_key not in item:
+            continue
+        locked[str(item_id)] = _ui_probability_from_score(item.get(score_key))
+    return locked
+
+
+def _ui_graph_to_arglib(payload: dict[str, Any]) -> ArgumentGraph:
+    graph = ArgumentGraph()
+
+    for doc in payload.get("supportingDocs", []):
+        if not isinstance(doc, dict):
+            continue
+        doc_id = doc.get("id")
+        if not doc_id:
+            continue
+        graph.supporting_documents[doc_id] = SupportingDocument(
+            id=str(doc_id),
+            name=str(doc.get("name", "")),
+            type=str(doc.get("sourceType", "note")),
+            url=str(doc.get("location", "")),
+        )
+
+    for evidence in payload.get("evidence", []):
+        if not isinstance(evidence, dict):
+            continue
+        evidence_id = evidence.get("id")
+        if not evidence_id:
+            continue
+        graph.evidence_cards[evidence_id] = EvidenceCard(
+            id=str(evidence_id),
+            title=str(evidence.get("title", "")),
+            supporting_doc_id=str(evidence.get("docId") or ""),
+            excerpt=str(evidence.get("excerpt", "")),
+            confidence=_clamp01(evidence.get("trust")),
+        )
+
+    for claim in payload.get("claims", []):
+        if not isinstance(claim, dict):
+            continue
+        claim_id = claim.get("id")
+        if not claim_id:
+            continue
+        graph.add_claim(
+            text=str(claim.get("text", "")),
+            claim_id=str(claim_id),
+            type=claim.get("type", "other"),
+            evidence_ids=list(claim.get("evidenceIds", [])),
+            metadata={"ui_credibility": claim.get("credibility")},
+        )
+
+    for warrant in payload.get("warrants", []):
+        if not isinstance(warrant, dict):
+            continue
+        warrant_id = warrant.get("id")
+        if not warrant_id:
+            continue
+        graph.add_warrant(
+            text=str(warrant.get("text", "")),
+            warrant_id=str(warrant_id),
+            evidence_ids=list(warrant.get("evidenceIds", [])),
+            metadata={"ui_credibility": warrant.get("credibility")},
+        )
+
+    gates = {
+        gate.get("id"): gate
+        for gate in payload.get("gates", [])
+        if isinstance(gate, dict) and gate.get("id")
+    }
+    for relation in payload.get("relations", []):
+        if not isinstance(relation, dict):
+            continue
+        src = relation.get("source")
+        dst = relation.get("target")
+        if not src or not dst:
+            continue
+        gate = gates.get(relation.get("gateId"), {})
+        metadata: dict[str, Any] = {}
+        if gate and gate.get("status") == "disabled":
+            metadata["gate_disabled"] = True
+        graph.add_relation(
+            src=str(src),
+            dst=str(dst),
+            kind=relation.get("kind", "support"),
+            warrant_ids=list(gate.get("warrantIds", [])) if gate else [],
+            gate_mode=gate.get("mode", "OR") if gate else "OR",
+            weight=relation.get("weight"),
+            metadata=metadata,
+        )
+
+    return graph
+
+
 class GraphStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -239,6 +355,55 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/scores")
+def score_graph(payload: dict[str, Any]) -> dict[str, Any]:
+    graph = _ui_graph_to_arglib(payload)
+    locked_claims = _ui_locked_scores(payload.get("claims", []))
+    locked_warrants = _ui_locked_scores(payload.get("warrants", []))
+    result = compute_credibility(
+        graph,
+        initial_scores=locked_claims or None,
+        initial_warrant_scores=locked_warrants or None,
+    )
+    claim_scores = result.final_scores
+    warrant_scores = result.warrant_scores
+
+    claims: list[dict[str, Any]] = []
+    for claim in payload.get("claims", []):
+        if not isinstance(claim, dict):
+            continue
+        claim_id = claim.get("id")
+        if claim_id in claim_scores:
+            updated = dict(claim)
+            updated["credibility"] = _ui_score_from_probability(claim_scores[claim_id])
+            claims.append(updated)
+        else:
+            claims.append(claim)
+
+    warrants: list[dict[str, Any]] = []
+    for warrant in payload.get("warrants", []):
+        if not isinstance(warrant, dict):
+            continue
+        warrant_id = warrant.get("id")
+        if warrant_id in warrant_scores:
+            updated = dict(warrant)
+            updated["credibility"] = _ui_score_from_probability(
+                warrant_scores[warrant_id]
+            )
+            warrants.append(updated)
+        else:
+            warrants.append(warrant)
+
+    return {"claims": claims, "warrants": warrants}
+
+
+@app.post("/diagnostics")
+def diagnostics_ui(payload: dict[str, Any]) -> dict[str, Any]:
+    graph = _ui_graph_to_arglib(payload)
+    stats = graph.diagnostics()
+    return {"flaws": [], "flawClaims": [], "flawEdges": [], "stats": stats}
+
+
 @app.post("/graphs", response_model=GraphResponse)
 def create_graph(request: GraphPayload) -> GraphResponse:
     graph_id = store.create(request.payload, validate=request.validate_payload)
@@ -270,59 +435,48 @@ def diagnostics(graph_id: str) -> dict[str, Any]:
 
 
 @app.post("/graphs/{graph_id}/credibility")
-def credibility(graph_id: str) -> dict[str, Any]:
+def credibility(graph_id: str, explain: bool = False) -> dict[str, Any]:
     graph = store.get(graph_id)
     initial_scores = {
-        unit_id: unit.metadata.get("claim_credibility")
+        unit_id: unit.score
         for unit_id, unit in graph.units.items()
-        if unit.metadata and "claim_credibility" in unit.metadata
+        if getattr(unit, "score", None) is not None
+    }
+    if not initial_scores:
+        initial_scores = {
+            unit_id: unit.metadata.get("claim_credibility")
+            for unit_id, unit in graph.units.items()
+            if unit.metadata and "claim_credibility" in unit.metadata
+        }
+    warrants = getattr(graph, "warrants", {})
+    initial_warrant_scores = {
+        warrant_id: warrant.score
+        for warrant_id, warrant in warrants.items()
+        if getattr(warrant, "score", None) is not None
     }
     result = compute_credibility(
-        graph, initial_scores=initial_scores or None
+        graph,
+        initial_scores=initial_scores or None,
+        initial_warrant_scores=initial_warrant_scores or None,
     )
-    return asdict(result)
+    payload = asdict(result)
+    if explain:
+        payload["explanations"] = explain_credibility(graph, result)
+    return payload
 
 
-@app.post("/graphs/{graph_id}/reasoning", response_model=ReasoningResponse)
-def reasoning(graph_id: str, request: ReasoningRequest) -> ReasoningResponse:
+@app.post("/graphs/{graph_id}/critique")
+def critique(graph_id: str, apply_actions: bool = False) -> dict[str, Any]:
+    from arglib.critique import apply_gate_actions, detect_patterns
+
     graph = store.get(graph_id)
-    af = graph.to_dung()
-    arguments = sorted(af.arguments)
-
-    if request.semantics == "grounded":
-        extensions = [sorted(af.grounded_extension())]
-        return ReasoningResponse(
-            semantics="grounded",
-            arguments=arguments,
-            extensions=extensions,
-        )
-    if request.semantics == "preferred":
-        extensions = [sorted(ext) for ext in af.preferred_extensions()]
-        return ReasoningResponse(
-            semantics="preferred",
-            arguments=arguments,
-            extensions=extensions,
-        )
-    if request.semantics == "stable":
-        extensions = [sorted(ext) for ext in af.stable_extensions()]
-        return ReasoningResponse(
-            semantics="stable",
-            arguments=arguments,
-            extensions=extensions,
-        )
-    if request.semantics == "complete":
-        extensions = [sorted(ext) for ext in af.complete_extensions()]
-        return ReasoningResponse(
-            semantics="complete",
-            arguments=arguments,
-            extensions=extensions,
-        )
-    labelings = af.labelings("grounded")[0]
-    return ReasoningResponse(
-        semantics="grounded_labeling",
-        arguments=arguments,
-        labeling=labelings,
-    )
+    critique_payload = graph.critique()
+    if apply_actions:
+        matches = detect_patterns(graph)
+        apply_gate_actions(graph, matches)
+        store.update(graph_id, graph.to_dict(), validate=False)
+        critique_payload["gate_actions_applied"] = True
+    return critique_payload
 
 
 @app.post("/graphs/{graph_id}/reasoner", response_model=ReasonerResponse)
