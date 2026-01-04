@@ -11,6 +11,42 @@ paths:
       responses:
         "200":
           description: OK
+  /scores:
+    post:
+      summary: Compute scores (UI payload)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Score payload
+  /diagnostics:
+    post:
+      summary: Compute diagnostics (UI payload)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Diagnostics payload
+  /critique:
+    post:
+      summary: Compute critique (UI payload)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Critique payload
   /graphs:
     post:
       summary: Create a graph

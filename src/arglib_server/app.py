@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import urllib.parse
@@ -12,7 +13,7 @@ from dataclasses import asdict
 from typing import Any, Literal
 from uuid import uuid4
 
-from arglib.core import ArgumentGraph, EvidenceCard, SupportingDocument
+from arglib.core import ArgumentGraph, EvidenceCard, EvidenceItem, SupportingDocument
 from arglib.io import dumps, validate_graph_payload
 from arglib.reasoning import compute_credibility, explain_credibility
 from fastapi import FastAPI, HTTPException
@@ -178,6 +179,74 @@ def _ui_score_from_probability(value: float) -> float:
     return max(-1.0, min(1.0, value * 2.0 - 1.0))
 
 
+def _ui_flag(item: dict[str, Any], *keys: str) -> bool:
+    return any(bool(item.get(key)) for key in keys)
+
+
+def _logit(probability: float) -> float:
+    clamped = max(1e-6, min(1.0 - 1e-6, probability))
+    return math.log(clamped / (1.0 - clamped))
+
+
+def _evidence_support_from_probability(
+    probability: float, *, lambda_: float = 0.5
+) -> float:
+    if lambda_ <= 0:
+        return 0.0
+    value = _logit(probability) / lambda_
+    return max(-1.0, min(1.0, value))
+
+
+def _manual_evidence_item(item_id: str, support: float) -> EvidenceItem:
+    stance = "supports" if support >= 0 else "attacks"
+    return EvidenceItem(
+        id=f"manual:{item_id}",
+        source={"manual": True},
+        stance=stance,
+        strength=abs(support),
+    )
+
+
+def _apply_manual_scores(
+    graph: ArgumentGraph,
+    locked_claims: dict[str, float],
+    locked_warrants: dict[str, float],
+    *,
+    lambda_: float = 0.5,
+) -> None:
+    locked_claim_ids = set()
+    for claim_id, probability in locked_claims.items():
+        unit = graph.units.get(claim_id)
+        if unit is None:
+            continue
+        support = _evidence_support_from_probability(probability, lambda_=lambda_)
+        unit.evidence = [_manual_evidence_item(f"claim:{claim_id}", support)]
+        unit.evidence_ids = []
+        locked_claim_ids.add(claim_id)
+
+    if locked_claim_ids:
+        graph.relations = [
+            relation for relation in graph.relations if relation.dst not in locked_claim_ids
+        ]
+
+    locked_warrant_ids = set()
+    for warrant_id, probability in locked_warrants.items():
+        warrant = graph.warrants.get(warrant_id)
+        if warrant is None:
+            continue
+        support = _evidence_support_from_probability(probability, lambda_=lambda_)
+        warrant.evidence = [_manual_evidence_item(f"warrant:{warrant_id}", support)]
+        warrant.evidence_ids = []
+        locked_warrant_ids.add(warrant_id)
+
+    if locked_warrant_ids:
+        graph.warrant_attacks = [
+            attack
+            for attack in graph.warrant_attacks
+            if attack.warrant_id not in locked_warrant_ids
+        ]
+
+
 def _ui_score_locked(item: dict[str, Any]) -> bool:
     return bool(
         item.get("scoreLocked")
@@ -247,6 +316,11 @@ def _ui_graph_to_arglib(payload: dict[str, Any]) -> ArgumentGraph:
             claim_id=str(claim_id),
             type=claim.get("type", "other"),
             evidence_ids=list(claim.get("evidenceIds", [])),
+            score=claim.get("credibility"),
+            is_axiom=_ui_flag(claim, "isAxiom", "is_axiom", "axiom"),
+            ignore_influence=_ui_flag(
+                claim, "ignoreInfluence", "ignore_influence"
+            ),
             metadata={"ui_credibility": claim.get("credibility")},
         )
 
@@ -260,6 +334,11 @@ def _ui_graph_to_arglib(payload: dict[str, Any]) -> ArgumentGraph:
             text=str(warrant.get("text", "")),
             warrant_id=str(warrant_id),
             evidence_ids=list(warrant.get("evidenceIds", [])),
+            score=warrant.get("credibility"),
+            is_axiom=_ui_flag(warrant, "isAxiom", "is_axiom", "axiom"),
+            ignore_influence=_ui_flag(
+                warrant, "ignoreInfluence", "ignore_influence"
+            ),
             metadata={"ui_credibility": warrant.get("credibility")},
         )
 
@@ -360,10 +439,11 @@ def score_graph(payload: dict[str, Any]) -> dict[str, Any]:
     graph = _ui_graph_to_arglib(payload)
     locked_claims = _ui_locked_scores(payload.get("claims", []))
     locked_warrants = _ui_locked_scores(payload.get("warrants", []))
+    if locked_claims or locked_warrants:
+        _apply_manual_scores(graph, locked_claims, locked_warrants)
     result = compute_credibility(
         graph,
         initial_scores=locked_claims or None,
-        initial_warrant_scores=locked_warrants or None,
     )
     claim_scores = result.final_scores
     warrant_scores = result.warrant_scores
@@ -371,6 +451,9 @@ def score_graph(payload: dict[str, Any]) -> dict[str, Any]:
     claims: list[dict[str, Any]] = []
     for claim in payload.get("claims", []):
         if not isinstance(claim, dict):
+            continue
+        if _ui_score_locked(claim):
+            claims.append(claim)
             continue
         claim_id = claim.get("id")
         if claim_id in claim_scores:
@@ -383,6 +466,9 @@ def score_graph(payload: dict[str, Any]) -> dict[str, Any]:
     warrants: list[dict[str, Any]] = []
     for warrant in payload.get("warrants", []):
         if not isinstance(warrant, dict):
+            continue
+        if _ui_score_locked(warrant):
+            warrants.append(warrant)
             continue
         warrant_id = warrant.get("id")
         if warrant_id in warrant_scores:
@@ -401,7 +487,19 @@ def score_graph(payload: dict[str, Any]) -> dict[str, Any]:
 def diagnostics_ui(payload: dict[str, Any]) -> dict[str, Any]:
     graph = _ui_graph_to_arglib(payload)
     stats = graph.diagnostics()
-    return {"flaws": [], "flawClaims": [], "flawEdges": [], "stats": stats}
+    axiom_warnings = stats.get("axiom_warnings", [])
+    return {
+        "flaws": axiom_warnings,
+        "flawClaims": [],
+        "flawEdges": [],
+        "stats": stats,
+    }
+
+
+@app.post("/critique")
+def critique_ui(payload: dict[str, Any]) -> dict[str, Any]:
+    graph = _ui_graph_to_arglib(payload)
+    return graph.critique()
 
 
 @app.post("/graphs", response_model=GraphResponse)
@@ -448,16 +546,9 @@ def credibility(graph_id: str, explain: bool = False) -> dict[str, Any]:
             for unit_id, unit in graph.units.items()
             if unit.metadata and "claim_credibility" in unit.metadata
         }
-    warrants = getattr(graph, "warrants", {})
-    initial_warrant_scores = {
-        warrant_id: warrant.score
-        for warrant_id, warrant in warrants.items()
-        if getattr(warrant, "score", None) is not None
-    }
     result = compute_credibility(
         graph,
         initial_scores=initial_scores or None,
-        initial_warrant_scores=initial_warrant_scores or None,
     )
     payload = asdict(result)
     if explain:

@@ -35,11 +35,11 @@ wheels = [
 
 [[package]]
 name = "arglib"
-version = "0.1.8"
+version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/a3/fb33310906f209d19bfa1b11a8d7e078a6bcd41ee13cb7c67a8a0f7364a9/arglib-0.1.8.tar.gz", hash = "sha256:02167daa7a7f85eb83b82e4608d984051fecea63663023e078e1a7c52d7adacd", size = 41942, upload-time = "2026-01-03T20:19:02.755Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/14/06040ec10bc731bc2ec2e653f2e906f48b06e9090a12be2b715d69ee15c3/arglib-0.1.10.tar.gz", hash = "sha256:6885ae8e4171455b786556bcff10f4d109ab93fdbbc5e16a17561fb3c1479fad", size = 42419, upload-time = "2026-01-04T22:30:30.654Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/bf/f356bce60faf915c456d39f5eea72697c70a11c9006b67c205f34865f165/arglib-0.1.8-py3-none-any.whl", hash = "sha256:de8c8a1aa685532576bef972c55317092bbcdf1aaf1d321cf133e233ed4ec7ce", size = 48306, upload-time = "2026-01-03T20:19:01.712Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/14/65c90c2d412bd66202d96484f5ed45e635afbd32365c455b0db7a57649a9/arglib-0.1.10-py3-none-any.whl", hash = "sha256:da1088eafeb941b79faa93a871960e808b875f4f4a77348320d175d6255b4afc", size = 49238, upload-time = "2026-01-04T22:30:28.608Z" },
 ]
 
 [[package]]
@@ -61,7 +61,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arglib", specifier = ">=0.1.8" },
+    { name = "arglib", specifier = ">=0.1.10" },
     { name = "fastapi", specifier = ">=0.111" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]

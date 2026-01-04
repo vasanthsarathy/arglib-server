@@ -9,7 +9,7 @@ description = "FastAPI service for ArgLib"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "arglib>=0.1.9",
+  "arglib>=0.1.10",
   "fastapi>=0.111",
   "uvicorn>=0.30",
 ]
